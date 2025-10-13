@@ -1,0 +1,4 @@
+        file_menu = menubar.addMenu("File")
+        open_action = QAction("Mở thư mục DICOM", self)
+        open_action.triggered.connect(self._browse_dicom_dir)
+        file_menu.addAction(open_actio

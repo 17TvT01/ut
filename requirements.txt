@@ -1,0 +1,6 @@
+numpy>=1.23
+pydicom>=2.3
+PyQt6>=6.4
+scipy>=1.10
+torch>=2.0
+requests>=2.31
