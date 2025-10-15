@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -94,4 +94,19 @@ def analyze_nodules(
     return report
 
 
-__all__ = ["infer_nodules", "postprocess_nodules", "analyze_nodules"]
+def extract_filtered_mask(mask: np.ndarray, nodules: Sequence[Dict[str, float]]) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    if ndimage is None:
+        return mask.astype(np.uint8), None
+    if not nodules:
+        return np.zeros_like(mask, dtype=np.uint8), np.zeros_like(mask, dtype=np.int32)
+    labeled, _ = ndimage.label(mask)
+    keep_ids = {int(nodule.get("id", 0)) for nodule in nodules if nodule.get("id") is not None}
+    if not keep_ids:
+        return np.zeros_like(mask, dtype=np.uint8), np.zeros_like(mask, dtype=np.int32)
+    keep_mask = np.isin(labeled, list(keep_ids))
+    filtered = keep_mask.astype(np.uint8)
+    labeled_filtered = np.where(keep_mask, labeled, 0).astype(np.int32)
+    return filtered, labeled_filtered
+
+
+__all__ = ["infer_nodules", "postprocess_nodules", "analyze_nodules", "extract_filtered_mask"]

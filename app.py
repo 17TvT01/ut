@@ -40,7 +40,7 @@ from PyQt6.QtWidgets import (
 from nodule_ai.annotations import NoduleAnnotation, parse_annotation_xml
 from nodule_ai.dicom import load_dicom_series
 from nodule_ai.dataset import LIDCDataset
-from nodule_ai.inference import analyze_nodules, infer_nodules, postprocess_nodules
+from nodule_ai.inference import analyze_nodules, infer_nodules, postprocess_nodules, extract_filtered_mask
 from nodule_ai.model import ComplexUNet3D
 from nodule_ai.trainer import TrainingConfig, train_model
 from nodule_ai.storage import DatasetRegistry, ensure_local_path
@@ -268,6 +268,8 @@ class NoduleApp(QMainWindow):
         self.dataset_registry = DatasetRegistry(self.cache_root / "datasets.json")
         self._model_metadata: dict = {}
         self._default_target_shape: Tuple[int, int, int] | None = (160, 160, 160)
+        self._labeled_mask: Optional[np.ndarray] = None
+        self._selected_nodule_id: Optional[int] = None
 
         self._init_ui()
         self.training_thread: Optional[QThread] = None
@@ -370,8 +372,8 @@ class NoduleApp(QMainWindow):
         results_layout = QHBoxLayout()
         results_group.setLayout(results_layout)
 
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["ID", "Voxel", "Z", "Y", "X", "Malignancy"])
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels(["ID", "Voxel", "Z", "Y", "X", "Malignancy", "Color"])
         self.table.horizontalHeader().setStretchLastSection(True)
         results_layout.addWidget(self.table, stretch=1)
 
@@ -638,8 +640,36 @@ class NoduleApp(QMainWindow):
     def _on_slice_changed(self, value: int) -> None:
         self.slice_label.setText(f"Lát cắt: {value}")
         if self.volume is not None and self.mask is not None:
-            pixmap = self._slice_to_pixmap(self.volume, self.mask, value)
+            pixmap = self._slice_to_pixmap(self.volume, self.mask, value, highlight_nodule_id=self._selected_nodule_id)
             self.image_label.setPixmap(pixmap)
+
+    def _on_table_cell_clicked(self, row: int, column: int) -> None:
+        """Navigate to the slice containing the clicked nodule."""
+        if column == 0 and row < len(self.summary):  # ID column clicked
+            nodule = self.summary[row]
+            centroid = nodule.get("centroid", [0.0, 0.0, 0.0])
+            z_slice = int(round(centroid[0]))  # Z-coordinate is slice index
+            nodule_id = nodule.get("detected_id")
+
+            # Ensure slice is within valid range
+            if self.volume is not None:
+                max_slice = self.volume.shape[0] - 1
+                z_slice = max(0, min(z_slice, max_slice))
+
+                # Set selected nodule for highlighting
+                self._selected_nodule_id = nodule_id
+
+                # Update slider and display
+                self.slice_slider.blockSignals(True)  # Prevent recursive calls
+                self.slice_slider.setValue(z_slice)
+                self.slice_slider.blockSignals(False)
+
+                # Update display with highlight
+                pixmap = self._slice_to_pixmap(self.volume, self.mask, z_slice, highlight_nodule_id=nodule_id)
+                self.image_label.setPixmap(pixmap)
+
+                # Highlight the selected row
+                self.table.selectRow(row)
 
     def _on_run_analysis(self) -> None:
         dicom_source = self.dicom_path_edit.text().strip()
@@ -676,6 +706,7 @@ class NoduleApp(QMainWindow):
         self.volume = volume
         self.mask = mask
         self.summary = summary
+        self._selected_nodule_id = None  # Reset selection when new analysis
 
         self._populate_table(summary)
         if volume is not None and mask is not None:
@@ -697,6 +728,7 @@ class NoduleApp(QMainWindow):
     ) -> Tuple[np.ndarray, Optional[np.ndarray], List[dict]]:
         volume_np, meta = load_dicom_series(dicom_source)
         original_volume = volume_np
+        self._labeled_mask = None
         model = self._load_model()
         target_shape = self._resolve_inference_shape(original_volume.shape)
         processed_volume = original_volume
@@ -751,8 +783,10 @@ class NoduleApp(QMainWindow):
             nodules = postprocess_nodules(binary_mask, min_voxels=min_voxels)
         except ImportError as exc:
             raise RuntimeError("Can cai scipy de hau xu ly.") from exc
+        display_mask, labeled_mask = extract_filtered_mask(binary_mask, nodules)
+        self._labeled_mask = labeled_mask
         summary = analyze_nodules(nodules, annotations, meta)
-        return original_volume, binary_mask, summary
+        return original_volume, display_mask, summary
 
     def _load_model(self) -> ComplexUNet3D:
         checkpoint_path = self._checkpoint_path
@@ -864,6 +898,19 @@ class NoduleApp(QMainWindow):
         self.table.setRowCount(len(summary))
         for row, item in enumerate(summary):
             centroid = item.get("centroid") or [0.0, 0.0, 0.0]
+            malignancy = item.get("malignancy_score")
+
+            # Determine color based on malignancy
+            if malignancy is not None:
+                if malignancy >= 4:
+                    color_text = "🔴 High"
+                elif malignancy >= 3:
+                    color_text = "🟠 Medium"
+                else:
+                    color_text = "🟢 Low"
+            else:
+                color_text = "⚪ Unknown"
+
             values = [
                 item.get("detected_id"),
                 item.get("voxel_count"),
@@ -871,32 +918,108 @@ class NoduleApp(QMainWindow):
                 round(float(centroid[1]), 2),
                 round(float(centroid[2]), 2),
                 item.get("malignancy_score"),
+                color_text,
             ]
             for col, value in enumerate(values):
                 text = "" if value is None else str(value)
-                self.table.setItem(row, col, QTableWidgetItem(text))
+                table_item = QTableWidgetItem(text)
+
+                # Set background color based on malignancy
+                if col == 6 and malignancy is not None:  # Color column
+                    if malignancy >= 4:
+                        table_item.setBackground(Qt.GlobalColor.red)
+                    elif malignancy >= 3:
+                        table_item.setBackground(Qt.GlobalColor.darkYellow)
+                    else:
+                        table_item.setBackground(Qt.GlobalColor.green)
+
+                self.table.setItem(row, col, table_item)
+
         self.table.resizeColumnsToContents()
+        # Connect click signal to navigate to nodule slice
+        self.table.cellClicked.connect(self._on_table_cell_clicked)
 
-    def _slice_to_pixmap(self, volume: np.ndarray, mask: np.ndarray, index: int) -> QPixmap:
+    def _slice_to_pixmap(self, volume: np.ndarray, mask: np.ndarray, index: int, highlight_nodule_id: Optional[int] = None) -> QPixmap:
+        from PIL import Image, ImageDraw, ImageFont
+
         base = (volume[index] * 255).clip(0, 255).astype(np.uint8)
-        slice_mask = mask[index] > 0.5
-        rgb = np.stack([base, base, base], axis=-1).astype(np.float32)
+        rgb = np.stack([base, base, base], axis=-1).astype(np.uint8)
+        pil_image = Image.fromarray(rgb).convert("RGBA")
+        draw = ImageDraw.Draw(pil_image)
 
-        if np.any(slice_mask):
-            overlay_color = np.array([255.0, 36.0, 66.0], dtype=np.float32)
-            alpha = 0.35
-            rgb[slice_mask] = (1 - alpha) * rgb[slice_mask] + alpha * overlay_color
+        try:
+            font = ImageFont.truetype("DejaVuSans-Bold.ttf", 12)
+        except Exception:
+            try:
+                font = ImageFont.truetype("arial.ttf", 12)
+            except Exception:
+                font = ImageFont.load_default()
 
-            # Highlight mask boundary to make structures clearer
-            edge_mask = self._mask_boundary(slice_mask)
-            if np.any(edge_mask):
-                rgb[edge_mask] = np.array([255.0, 255.0, 0.0], dtype=np.float32)
+        labeled_volume = None
+        if isinstance(self._labeled_mask, np.ndarray) and self._labeled_mask.shape == mask.shape:
+            labeled_volume = self._labeled_mask
 
-        rgb = np.clip(rgb, 0, 255).astype(np.uint8)
-        rgb = np.ascontiguousarray(rgb)
-        height, width, _ = rgb.shape
+        slice_nodules: List[dict] = []
+        for nodule in self.summary:
+            nodule_id = int(nodule.get("detected_id", 0) or 0)
+            if nodule_id <= 0:
+                continue
+            if labeled_volume is not None and np.any(labeled_volume[index] == nodule_id):
+                slice_nodules.append(nodule)
+                continue
+            centroid = nodule.get("centroid", [0, 0, 0])
+            if int(round(centroid[0])) == index:
+                slice_nodules.append(nodule)
+
+        for nodule in slice_nodules:
+            nodule_id = int(nodule.get("detected_id", 0) or 0)
+            voxel_count = nodule.get("voxel_count", 0)
+
+            if labeled_volume is not None:
+                nodule_mask = labeled_volume[index] == nodule_id
+            else:
+                nodule_mask = mask[index] > 0.5
+
+            if not np.any(nodule_mask):
+                continue
+
+            border_color = (255, 255, 0)
+            boundary_mask = self._mask_boundary(nodule_mask)
+            if np.any(boundary_mask):
+                boundary_alpha = Image.fromarray((boundary_mask.astype(np.uint8) * 255), mode="L")
+                border_layer = Image.new("RGBA", pil_image.size, (*border_color, 0))
+                border_layer.putalpha(boundary_alpha)
+                pil_image = Image.alpha_composite(pil_image, border_layer)
+                draw = ImageDraw.Draw(pil_image)
+
+            y_coords, x_coords = np.where(nodule_mask)
+            if len(x_coords) > 0 and len(y_coords) > 0:
+                min_x, max_x = int(np.min(x_coords)), int(np.max(x_coords))
+                min_y, max_y = int(np.min(y_coords)), int(np.max(y_coords))
+                draw.rectangle([min_x, min_y, max_x, max_y], outline=border_color, width=2)
+
+                label_text = f"ID:{nodule_id}"
+                malignancy = nodule.get("malignancy_score")
+                if malignancy is not None:
+                    label_text += f" M:{malignancy}"
+                if voxel_count > 0:
+                    label_text += f" V:{voxel_count}"
+
+                text_x = min_x
+                text_y = max(min_y - 20, 0)
+                text_bbox = draw.textbbox((text_x, text_y), label_text, font=font)
+                draw.rectangle(text_bbox, fill=(0, 0, 0, 180))
+                text_color = (255, 255, 255)
+                if highlight_nodule_id is not None and nodule_id == highlight_nodule_id:
+                    text_color = (255, 255, 0)
+                draw.text((text_x, text_y), label_text, fill=text_color, font=font)
+
+        pil_rgb = pil_image.convert("RGB")
+        rgb_array = np.array(pil_rgb, dtype=np.uint8)
+        rgb_array = np.ascontiguousarray(rgb_array)
+        height, width, _ = rgb_array.shape
         bytes_per_line = 3 * width
-        image = QImage(rgb.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
+        image = QImage(rgb_array.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
         return QPixmap.fromImage(image)
 
     @staticmethod
@@ -915,6 +1038,34 @@ class NoduleApp(QMainWindow):
         inner[:, 0] = False
         inner[:, -1] = False
         return mask_slice & ~inner
+
+    @staticmethod
+    def _get_boundary_points(mask_slice: np.ndarray) -> List[Tuple[int, int]]:
+        """Extract boundary points as polygon vertices for drawing."""
+        boundary = NoduleApp._mask_boundary(mask_slice)
+        if not np.any(boundary):
+            return []
+
+        # Find boundary pixels
+        y_coords, x_coords = np.where(boundary)
+
+        # Simple approach: find convex hull points for smoother boundary
+        points = list(zip(x_coords, y_coords))
+
+        if len(points) <= 2:
+            return points
+
+        # Sort points to create a rough polygon
+        # Simple clockwise sorting around center
+        center_x = np.mean(x_coords)
+        center_y = np.mean(y_coords)
+
+        def angle_from_center(point):
+            x, y = point
+            return np.arctan2(y - center_y, x - center_x)
+
+        points.sort(key=angle_from_center)
+        return points
 
     def _on_start_training(self) -> None:
         if self.training_thread and self.training_thread.isRunning():
