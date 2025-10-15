@@ -1,0 +1,28 @@
+{
+  "model": "ComplexUNet3D",
+  "model_params": {
+    "n_channels": 1,
+    "n_classes": 1,
+    "base_filters": 16,
+    "dropout": 0.1,
+    "upsample_mode": "trilinear"
+  },
+  "use_amp": true,
+  "pin_memory": true,
+  "non_blocking_transfers": true,
+  "multi_gpu": false,
+  "gpu_count": 1,
+  "best_epoch": 1,
+  "best_val_loss": 1.0,
+  "final_train_loss": 1.0,
+  "final_val_loss": 1.0,
+  "epochs_completed": 20,
+  "device": "cuda",
+  "data_dir": "C:\\NCS\\NCUTP\\data",
+  "checkpoint": "checkpoints\\complex_unet3d.pt",
+  "artifacts": {
+    "history_json": "checkpoints\\complex_unet3d.history.json",
+    "history_csv": "checkpoints\\complex_unet3d.history.csv",
+    "best_checkpoint": "checkpoints\\complex_unet3d.pt"
+  }
+}

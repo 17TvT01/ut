@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 import torch
+from torch import amp
 
 from .annotations import NoduleAnnotation
 
@@ -18,10 +19,13 @@ def infer_nodules(
     model: torch.nn.Module,
     volume: torch.Tensor,
     threshold: float = 0.5,
+    use_amp: bool = False,
 ) -> np.ndarray:
     model.eval()
     with torch.no_grad():
-        logits = model(volume.unsqueeze(0))
+        device_type = volume.device.type if hasattr(volume, "device") else "cpu"
+        with amp.autocast(device_type=device_type, enabled=use_amp):
+            logits = model(volume.unsqueeze(0))
         probs = torch.sigmoid(logits)[0, 0]
     binary = (probs >= threshold).cpu().numpy().astype(np.uint8)
     return binary

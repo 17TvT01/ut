@@ -35,6 +35,7 @@ class TrainingConfig:
     device: str = "cuda"
     checkpoint: Path = Path("checkpoints/complex_unet3d.pt")
     resume: Path | None = None
+    target_shape: Tuple[int, int, int] | None = (160, 160, 160)
 
 
 def _json_default(value: Any) -> Any:
@@ -82,9 +83,10 @@ def build_dataloaders(
     val_split: float,
     num_workers: int,
     seed: int,
+    target_shape: Tuple[int, int, int] | None,
     pin_memory: bool = False,
 ) -> Tuple[DataLoader, DataLoader]:
-    dataset = LIDCDataset(data_dir, cache=False)
+    dataset = LIDCDataset(data_dir, cache=False, target_shape=target_shape)
     if len(dataset) < 2:
         raise ValueError("Need at least 2 studies to create validation split")
     val_size = max(1, int(len(dataset) * val_split))
@@ -144,6 +146,7 @@ def train_model(
         config.val_split,
         config.num_workers,
         config.seed,
+        config.target_shape,
         pin_memory=auto_pin_memory,
     )
     model = ComplexUNet3D(
@@ -214,6 +217,7 @@ def train_model(
             "dropout": config.dropout,
             "upsample_mode": config.upsample_mode,
         },
+        "target_shape": list(config.target_shape) if config.target_shape else None,
         "use_amp": use_amp,
         "pin_memory": auto_pin_memory,
         "non_blocking_transfers": non_blocking,

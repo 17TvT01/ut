@@ -4,10 +4,11 @@ import json
 import psutil
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Sequence
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer
 from PyQt6.QtGui import QAction, QImage, QPixmap, QTextCursor
 from PyQt6.QtWidgets import (
@@ -38,6 +39,7 @@ from PyQt6.QtWidgets import (
 
 from nodule_ai.annotations import NoduleAnnotation, parse_annotation_xml
 from nodule_ai.dicom import load_dicom_series
+from nodule_ai.dataset import LIDCDataset
 from nodule_ai.inference import analyze_nodules, infer_nodules, postprocess_nodules
 from nodule_ai.model import ComplexUNet3D
 from nodule_ai.trainer import TrainingConfig, train_model
@@ -264,6 +266,8 @@ class NoduleApp(QMainWindow):
         self.cache_root = Path.home() / ".nodule_ai" / "cache"
         self.cache_root.mkdir(parents=True, exist_ok=True)
         self.dataset_registry = DatasetRegistry(self.cache_root / "datasets.json")
+        self._model_metadata: dict = {}
+        self._default_target_shape: Tuple[int, int, int] | None = (160, 160, 160)
 
         self._init_ui()
         self.training_thread: Optional[QThread] = None
@@ -692,14 +696,25 @@ class NoduleApp(QMainWindow):
         min_voxels: int,
     ) -> Tuple[np.ndarray, Optional[np.ndarray], List[dict]]:
         volume_np, meta = load_dicom_series(dicom_source)
+        original_volume = volume_np
+        model = self._load_model()
+        target_shape = self._resolve_inference_shape(original_volume.shape)
+        processed_volume = original_volume
+        if target_shape and tuple(target_shape) != tuple(original_volume.shape):
+            volume_tensor_cpu = torch.from_numpy(original_volume).unsqueeze(0)
+            processed_volume = (
+                LIDCDataset.downsample_volume(volume_tensor_cpu, target_shape)
+                .squeeze(0)
+                .cpu()
+                .numpy()
+            )
 
         annotations: List[NoduleAnnotation] = []
         if xml_path and xml_path.exists():
             annotations = parse_annotation_xml(xml_path)
 
-        model = self._load_model()
         volume_tensor = (
-            torch.from_numpy(volume_np)
+            torch.from_numpy(processed_volume.astype(np.float32))
             .unsqueeze(0)
             .to(
                 self.inference_device,
@@ -707,13 +722,37 @@ class NoduleApp(QMainWindow):
                 non_blocking=self.inference_device.type == "cuda",
             )
         )
-        binary_mask = infer_nodules(model, volume_tensor, threshold=threshold)
+        binary_mask = infer_nodules(
+            model,
+            volume_tensor,
+            threshold=threshold,
+            use_amp=self.inference_device.type == "cuda",
+        )
+        del volume_tensor
+        if self.inference_device.type == "cuda":
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+        binary_mask = binary_mask.astype(np.uint8)
+        if tuple(processed_volume.shape) != tuple(original_volume.shape):
+            mask_tensor = (
+                torch.from_numpy(binary_mask.astype(np.float32))
+                .unsqueeze(0)
+                .unsqueeze(0)
+            )
+            mask_tensor = F.interpolate(
+                mask_tensor,
+                size=original_volume.shape,
+                mode="nearest",
+            )
+            binary_mask = (
+                mask_tensor.squeeze(0).squeeze(0).cpu().numpy().astype(np.uint8)
+            )
         try:
             nodules = postprocess_nodules(binary_mask, min_voxels=min_voxels)
         except ImportError as exc:
             raise RuntimeError("Can cai scipy de hau xu ly.") from exc
         summary = analyze_nodules(nodules, annotations, meta)
-        return volume_np, binary_mask, summary
+        return original_volume, binary_mask, summary
 
     def _load_model(self) -> ComplexUNet3D:
         checkpoint_path = self._checkpoint_path
@@ -729,16 +768,25 @@ class NoduleApp(QMainWindow):
             "dropout": 0.1,
             "upsample_mode": "trilinear",
         }
-        summary_path = checkpoint_path.with_suffix(".summary.json")
-        if summary_path.exists():
+        summary_candidates = [
+            checkpoint_path.with_suffix(".summary.json"),
+            checkpoint_path.with_suffix(".history.summary.json"),
+        ]
+        metadata = None
+        for candidate in summary_candidates:
+            if not candidate.exists():
+                continue
             try:
-                metadata = json.loads(summary_path.read_text(encoding="utf-8"))
-                model_params = metadata.get("model_params") or {}
-                for key in params:
-                    if key in model_params:
-                        params[key] = model_params[key]
+                metadata = json.loads(candidate.read_text(encoding="utf-8"))
+                break
             except Exception:
-                pass
+                continue
+        self._model_metadata = metadata or {}
+        if metadata:
+            model_params = metadata.get("model_params") or {}
+            for key in params:
+                if key in model_params:
+                    params[key] = model_params[key]
 
         device = self.inference_device
         model = ComplexUNet3D(**params).to(device)
@@ -747,18 +795,70 @@ class NoduleApp(QMainWindow):
         if torch.cuda.is_available() and torch.cuda.device_count() > 1 and device.type == "cuda":
             model = torch.nn.DataParallel(model)
 
-        state = torch.load(checkpoint_path, map_location="cpu")
+        try:
+            state = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+        except TypeError:
+            state = torch.load(checkpoint_path, map_location="cpu")
         if isinstance(state, dict):
             if "model_state" in state:
                 state = state["model_state"]
             elif "state_dict" in state:
                 state = state["state_dict"]
         if not isinstance(state, dict):
-            raise RuntimeError(f"Checkpoint '{checkpoint_path}' không hợp lệ.")
-        model.load_state_dict(state)
+            raise RuntimeError(f"Invalid checkpoint '{checkpoint_path}'.")
+        try:
+            model.load_state_dict(state)
+        except RuntimeError as exc:
+            hint = ""
+            if metadata:
+                original_filters = metadata.get("model_params", {}).get("base_filters")
+                if original_filters is not None and original_filters != params.get("base_filters"):
+                    hint = f" (checkpoint base_filters={original_filters}, current={params.get('base_filters')})"
+            raise RuntimeError(f"Failed to load checkpoint: {exc}{hint}") from exc
         model = model.to(device)
         model.eval()
         return model
+
+    def _resolve_inference_shape(self, volume_shape: Tuple[int, int, int]) -> Optional[Tuple[int, int, int]]:
+        candidate = self._normalize_shape(self._model_metadata.get("target_shape"))
+        if candidate:
+            return candidate
+        preprocessing = self._model_metadata.get("preprocessing")
+        if isinstance(preprocessing, dict):
+            prep_candidate = self._normalize_shape(preprocessing.get("target_shape"))
+            if prep_candidate:
+                return prep_candidate
+        default_shape = self._normalize_shape(self._default_target_shape)
+        if not default_shape:
+            return None
+        if self.inference_device.type != "cuda":
+            return default_shape
+        try:
+            total_memory = torch.cuda.get_device_properties(self.inference_device).total_memory
+        except Exception:
+            total_memory = None
+        if total_memory is None or total_memory <= 5 * (1024**3):
+            return tuple(min(dim, tgt) for dim, tgt in zip(volume_shape, default_shape))
+        return None
+
+    @staticmethod
+    def _normalize_shape(shape: Optional[Sequence[int]]) -> Optional[Tuple[int, int, int]]:
+        if shape is None:
+            return None
+        if isinstance(shape, tuple):
+            candidate = list(shape)
+        else:
+            try:
+                candidate = list(shape)  # type: ignore[arg-type]
+            except TypeError:
+                return None
+        if len(candidate) != 3:
+            return None
+        try:
+            normalized = tuple(max(1, int(value)) for value in candidate)
+        except (TypeError, ValueError):
+            return None
+        return normalized
 
     def _populate_table(self, summary: List[dict]) -> None:
         self.table.setRowCount(len(summary))
@@ -779,14 +879,42 @@ class NoduleApp(QMainWindow):
 
     def _slice_to_pixmap(self, volume: np.ndarray, mask: np.ndarray, index: int) -> QPixmap:
         base = (volume[index] * 255).clip(0, 255).astype(np.uint8)
-        slice_mask = mask[index].astype(bool)
-        rgb = np.stack([base, base, base], axis=-1)
-        rgb[slice_mask] = [255, 0, 0]
+        slice_mask = mask[index] > 0.5
+        rgb = np.stack([base, base, base], axis=-1).astype(np.float32)
+
+        if np.any(slice_mask):
+            overlay_color = np.array([255.0, 36.0, 66.0], dtype=np.float32)
+            alpha = 0.35
+            rgb[slice_mask] = (1 - alpha) * rgb[slice_mask] + alpha * overlay_color
+
+            # Highlight mask boundary to make structures clearer
+            edge_mask = self._mask_boundary(slice_mask)
+            if np.any(edge_mask):
+                rgb[edge_mask] = np.array([255.0, 255.0, 0.0], dtype=np.float32)
+
+        rgb = np.clip(rgb, 0, 255).astype(np.uint8)
         rgb = np.ascontiguousarray(rgb)
         height, width, _ = rgb.shape
         bytes_per_line = 3 * width
         image = QImage(rgb.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
         return QPixmap.fromImage(image)
+
+    @staticmethod
+    def _mask_boundary(mask_slice: np.ndarray) -> np.ndarray:
+        if mask_slice.ndim != 2:
+            return np.zeros_like(mask_slice, dtype=bool)
+        inner = (
+            mask_slice
+            & np.roll(mask_slice, 1, axis=0)
+            & np.roll(mask_slice, -1, axis=0)
+            & np.roll(mask_slice, 1, axis=1)
+            & np.roll(mask_slice, -1, axis=1)
+        )
+        inner[0, :] = False
+        inner[-1, :] = False
+        inner[:, 0] = False
+        inner[:, -1] = False
+        return mask_slice & ~inner
 
     def _on_start_training(self) -> None:
         if self.training_thread and self.training_thread.isRunning():
