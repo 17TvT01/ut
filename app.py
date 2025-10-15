@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import psutil
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer
 from PyQt6.QtGui import QAction, QImage, QPixmap, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication,
@@ -267,6 +268,7 @@ class NoduleApp(QMainWindow):
         self._init_ui()
         self.training_thread: Optional[QThread] = None
         self.training_worker: Optional[TrainingWorker] = None
+        self.monitor_timer: Optional[QTimer] = None
 
     # --------- UI setup ---------
     def _init_ui(self) -> None:
@@ -454,7 +456,15 @@ class NoduleApp(QMainWindow):
         if not torch.cuda.is_available() and "cuda" in devices:
             devices.remove("cuda")
         self.device_combo.addItems(devices)
+        # Update tooltip to indicate multi-GPU support
+        self.device_combo.setToolTip("Select device for training. Multi-GPU will be used automatically if multiple GPUs are available.")
         params_form.addWidget(self.device_combo, 2, 3)
+
+        # Add GPU status display
+        self.gpu_status_label = QLabel(self._get_gpu_status_text())
+        self.gpu_status_label.setStyleSheet("font-weight: bold; color: green;" if torch.cuda.is_available() else "font-weight: bold; color: red;")
+        params_form.addWidget(QLabel("GPU Status:"), 3, 0)
+        params_form.addWidget(self.gpu_status_label, 3, 1, 1, 3)
 
         params_group.setLayout(params_form)
         layout.addWidget(params_group)
@@ -462,6 +472,19 @@ class NoduleApp(QMainWindow):
         self.train_button = QPushButton("Bắt đầu huấn luyện")
         self.train_button.clicked.connect(self._on_start_training)
         layout.addWidget(self.train_button)
+
+        # Add GPU memory monitor during training
+        monitor_group = QGroupBox("Theo dõi tài nguyên")
+        monitor_layout = QHBoxLayout()
+        monitor_group.setLayout(monitor_layout)
+
+        self.gpu_memory_label = QLabel("GPU Memory: N/A")
+        self.cpu_usage_label = QLabel("CPU: N/A")
+        monitor_layout.addWidget(self.gpu_memory_label)
+        monitor_layout.addWidget(self.cpu_usage_label)
+        monitor_layout.addStretch()
+
+        layout.addWidget(monitor_group)
 
         self.train_log = QTextEdit()
         self.train_log.setReadOnly(True)
@@ -512,6 +535,70 @@ class NoduleApp(QMainWindow):
         value = value.strip()
         if value:
             self._set_checkpoint_path(Path(value))
+
+    def _get_gpu_status_text(self) -> str:
+        """Get GPU status information for display in UI."""
+        if not torch.cuda.is_available():
+            return "No GPU available - using CPU"
+
+        gpu_count = torch.cuda.device_count()
+        if gpu_count == 1:
+            try:
+                gpu_name = torch.cuda.get_device_name(0)
+                return f"1 GPU available: {gpu_name}"
+            except Exception:
+                return "1 GPU available"
+        else:
+            try:
+                gpu_names = [torch.cuda.get_device_name(i) for i in range(gpu_count)]
+                gpu_name = gpu_names[0]
+                if len(set(gpu_names)) == 1:
+                    return f"{gpu_count} GPUs available: {gpu_name}"
+                else:
+                    return f"{gpu_count} GPUs available (mixed types)"
+            except Exception:
+                return f"{gpu_count} GPUs available"
+
+    def _start_resource_monitoring(self) -> None:
+        """Start monitoring GPU memory and CPU usage during training."""
+        if self.monitor_timer:
+            self.monitor_timer.stop()
+
+        self.monitor_timer = QTimer()
+        self.monitor_timer.timeout.connect(self._update_resource_display)
+        self.monitor_timer.start(2000)  # Update every 2 seconds
+
+    def _stop_resource_monitoring(self) -> None:
+        """Stop resource monitoring."""
+        if self.monitor_timer:
+            self.monitor_timer.stop()
+            self.monitor_timer = None
+
+    def _update_resource_display(self) -> None:
+        """Update the resource usage display."""
+        try:
+            # GPU memory usage
+            if torch.cuda.is_available():
+                gpu_memory_used = 0
+                gpu_memory_total = 0
+                for i in range(torch.cuda.device_count()):
+                    gpu_memory_used += torch.cuda.memory_allocated(i) / 1024**3  # GB
+                    gpu_memory_total += torch.cuda.get_device_properties(i).total_memory / 1024**3  # GB
+                self.gpu_memory_label.setText(f"GPU Memory: {gpu_memory_used:.1f}/{gpu_memory_total:.1f} GB")
+            else:
+                self.gpu_memory_label.setText("GPU Memory: N/A")
+
+            # CPU usage
+            cpu_percent = psutil.cpu_percent(interval=None)
+            memory = psutil.virtual_memory()
+            memory_used_gb = memory.used / 1024**3
+            memory_total_gb = memory.total / 1024**3
+            self.cpu_usage_label.setText(f"CPU: {cpu_percent:.1f}% | RAM: {memory_used_gb:.1f}/{memory_total_gb:.1f} GB")
+
+        except Exception as e:
+            # In case of any error, show N/A
+            self.gpu_memory_label.setText("GPU Memory: N/A")
+            self.cpu_usage_label.setText("CPU: N/A")
 
     # --------- helpers ---------
     def _browse_dicom_dir(self) -> None:
@@ -655,6 +742,11 @@ class NoduleApp(QMainWindow):
 
         device = self.inference_device
         model = ComplexUNet3D(**params).to(device)
+
+        # Enable multi-GPU inference if multiple GPUs are available and device is CUDA
+        if torch.cuda.is_available() and torch.cuda.device_count() > 1 and device.type == "cuda":
+            model = torch.nn.DataParallel(model)
+
         state = torch.load(checkpoint_path, map_location="cpu")
         if isinstance(state, dict):
             if "model_state" in state:
@@ -735,6 +827,9 @@ class NoduleApp(QMainWindow):
         self._log_training("Bat dau huan luyen...")
         self._log_training(f"Su dung du lieu: {data_dir}")
 
+        # Start resource monitoring
+        self._start_resource_monitoring()
+
         self.training_worker = TrainingWorker(config)
         self.training_thread = QThread()
         self.training_worker.moveToThread(self.training_thread)
@@ -766,17 +861,27 @@ class NoduleApp(QMainWindow):
                 device = summary.get("device", "unknown")
                 amp_enabled = summary.get("use_amp")
                 pin_memory = summary.get("pin_memory")
+                multi_gpu = summary.get("multi_gpu")
+                gpu_count = summary.get("gpu_count")
                 msg = f"Thiet bi: {device}"
                 if amp_enabled is not None:
                     msg += f" | AMP: {'bat' if amp_enabled else 'tat'}"
                 if pin_memory is not None:
                     msg += f" | pin_memory: {'bat' if pin_memory else 'tat'}"
+                if multi_gpu is not None and multi_gpu:
+                    msg += f" | Multi-GPU: {'bat' if multi_gpu else 'tat'} ({gpu_count} GPUs)"
                 self._log_training(msg)
             except Exception:
                 pass
+        self._stop_resource_monitoring()
+        self.gpu_memory_label.setText("GPU Memory: N/A")
+        self.cpu_usage_label.setText("CPU: N/A")
         self.train_button.setEnabled(True)
 
     def _on_training_failed(self, error: str) -> None:
+        self._stop_resource_monitoring()
+        self.gpu_memory_label.setText("GPU Memory: N/A")
+        self.cpu_usage_label.setText("CPU: N/A")
         self._log_training(f"Loi: {error}")
         QMessageBox.critical(self, "Huan luyen that bai", error)
         self.train_button.setEnabled(True)

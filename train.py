@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
         "--device",
         type=str,
         default="cuda" if torch.cuda.is_available() else "cpu",
-        help="Training device (cuda or cpu)",
+        help="Training device (cuda or cpu, multi-GPU will be used automatically if available)",
     )
     amp_group = parser.add_mutually_exclusive_group()
     amp_group.add_argument("--amp", dest="use_amp", action="store_true", help="Force enable AMP mixed precision")
@@ -49,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--base-filters",
         type=int,
-        default=32,
+        default=16,
         help="Number of base convolution filters (applies to all supported models)",
     )
     parser.add_argument(

@@ -22,7 +22,7 @@ class TrainingConfig:
     epochs: int = 20
     batch_size: int = 1
     learning_rate: float = 1e-3
-    base_filters: int = 32
+    base_filters: int = 16
     dropout: float = 0.1
     upsample_mode: str = "trilinear"
     n_channels: int = 1
@@ -153,6 +153,11 @@ def train_model(
         dropout=config.dropout,
         upsample_mode=config.upsample_mode,
     ).to(device)
+
+    # Enable multi-GPU training if multiple GPUs are available and device is CUDA
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1 and device.type == "cuda":
+        model = torch.nn.DataParallel(model)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
     scaler = amp.GradScaler(enabled=use_amp)
 
@@ -212,6 +217,8 @@ def train_model(
         "use_amp": use_amp,
         "pin_memory": auto_pin_memory,
         "non_blocking_transfers": non_blocking,
+        "multi_gpu": torch.cuda.is_available() and torch.cuda.device_count() > 1 and device.type == "cuda",
+        "gpu_count": torch.cuda.device_count() if torch.cuda.is_available() else 0,
         "best_epoch": best_epoch if best_epoch >= start_epoch else None,
         "best_val_loss": best_val if best_val != float("inf") else None,
         "final_train_loss": history["train_loss"][-1] if history["train_loss"] else None,
