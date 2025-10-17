@@ -91,15 +91,12 @@ class LIDCDataset(Dataset):
         mode: str,
     ) -> torch.Tensor:
         target = tuple(int(dim) for dim in target_shape)
-        current_shape = tensor.shape[1:]
-        if any(curr > tgt for curr, tgt in zip(current_shape, target)):
-            tensor = LIDCDataset._center_crop(tensor, target)
-            current_shape = tensor.shape[1:]
-        if current_shape == target:
+        if tensor.shape[1:] == target:
             return tensor
         kwargs: Dict[str, bool] = {}
         if mode in {"trilinear", "bilinear"}:
             kwargs["align_corners"] = False
+        tensor = tensor.to(dtype=torch.float32)
         tensor = F.interpolate(
             tensor.unsqueeze(0),
             size=target,
