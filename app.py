@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import psutil
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple, Sequence
 
@@ -13,6 +14,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer
 from PyQt6.QtGui import QAction, QImage, QPixmap, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -40,7 +42,13 @@ from PyQt6.QtWidgets import (
 from nodule_ai.annotations import NoduleAnnotation, parse_annotation_xml
 from nodule_ai.dicom import load_dicom_series
 from nodule_ai.dataset import LIDCDataset
-from nodule_ai.inference import analyze_nodules, infer_nodules, postprocess_nodules, extract_filtered_mask
+from nodule_ai.inference import (
+    analyze_nodules,
+    infer_nodules,
+    postprocess_nodules,
+    extract_filtered_mask,
+    estimate_lung_mask,
+)
 from nodule_ai.model import ComplexUNet3D
 from nodule_ai.trainer import TrainingConfig, train_model
 from nodule_ai.storage import DatasetRegistry, ensure_local_path
@@ -270,6 +278,7 @@ class NoduleApp(QMainWindow):
         self._default_target_shape: Tuple[int, int, int] | None = (160, 160, 160)
         self._labeled_mask: Optional[np.ndarray] = None
         self._selected_nodule_id: Optional[int] = None
+        self._current_training_checkpoint: Optional[Path] = None
 
         self._init_ui()
         self.training_thread: Optional[QThread] = None
@@ -343,7 +352,7 @@ class NoduleApp(QMainWindow):
         self.threshold_slider.valueChanged.connect(self._on_threshold_changed)
         threshold_box = QHBoxLayout()
         threshold_box.addWidget(self.threshold_slider)
-        self.threshold_label = QLabel("0.50")
+        self.threshold_label = QLabel("0.76")
         threshold_box.addWidget(self.threshold_label)
         threshold_container = QWidget()
         threshold_container.setLayout(threshold_box)
@@ -351,8 +360,17 @@ class NoduleApp(QMainWindow):
 
         self.min_voxels_spin = QSpinBox()
         self.min_voxels_spin.setRange(1, 5000)
-        self.min_voxels_spin.setValue(50)
+        self.min_voxels_spin.setValue(500)
         settings_form.addRow("Voxel tối thiểu", self.min_voxels_spin)
+
+        self.min_slices_spin = QSpinBox()
+        self.min_slices_spin.setRange(1, 50)
+        self.min_slices_spin.setValue(3)
+        settings_form.addRow("Số lát tối thiểu", self.min_slices_spin)
+
+        self.limit_to_lung_checkbox = QCheckBox("Chỉ giữ vùng trong phổi")
+        self.limit_to_lung_checkbox.setChecked(True)
+        settings_form.addRow(self.limit_to_lung_checkbox)
         settings_group.setLayout(settings_form)
 
         controls_layout = QHBoxLayout()
@@ -423,6 +441,16 @@ class NoduleApp(QMainWindow):
         out_container = QWidget()
         out_container.setLayout(out_box)
         data_form.addRow("Checkpoint xuất", out_container)
+
+        self.resume_checkpoint_edit = QLineEdit()
+        resume_button = QPushButton("Chọn...")
+        resume_button.clicked.connect(self._browse_resume_checkpoint)
+        resume_box = QHBoxLayout()
+        resume_box.addWidget(self.resume_checkpoint_edit)
+        resume_box.addWidget(resume_button)
+        resume_container = QWidget()
+        resume_container.setLayout(resume_box)
+        data_form.addRow("Tiếp tục từ checkpoint", resume_container)
 
         data_group.setLayout(data_form)
         layout.addWidget(data_group)
@@ -505,6 +533,49 @@ class NoduleApp(QMainWindow):
             resolved = Path(path)
         if resolved.is_dir():
             self.dataset_registry.add(resolved)
+
+    @staticmethod
+    def _timestamped_artifact_path(path: Path, timestamp: str) -> Path:
+        base = path.with_name(f"{path.stem}_{timestamp}{path.suffix}")
+        if not base.exists():
+            return base
+        counter = 1
+        while True:
+            candidate = path.with_name(f"{path.stem}_{timestamp}_{counter}{path.suffix}")
+            if not candidate.exists():
+                return candidate
+            counter += 1
+
+    def _archive_existing_training_artifacts(
+        self,
+        checkpoint_path: Path,
+        skip_paths: Optional[Sequence[Path]] = None,
+    ) -> None:
+        checkpoint_path = checkpoint_path.expanduser()
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        history_json = checkpoint_path.with_suffix(".history.json")
+        history_csv = history_json.with_suffix(".csv")
+        summary_json = history_json.with_suffix(".summary.json")
+        artifacts = [checkpoint_path, history_json, history_csv, summary_json]
+        archived_pairs: List[tuple[str, Path]] = []
+        skip_resolved = {path.expanduser().resolve() for path in (skip_paths or []) if path}
+
+        for artifact in artifacts:
+            if not artifact.exists():
+                continue
+            resolved = artifact.expanduser().resolve()
+            if resolved in skip_resolved:
+                continue
+            backup = self._timestamped_artifact_path(artifact, timestamp)
+            try:
+                artifact.rename(backup)
+                archived_pairs.append((artifact.name, backup))
+            except OSError as exc:
+                raise RuntimeError(f"Khong the luu tru {artifact.name}: {exc}") from exc
+
+        if archived_pairs:
+            details = ", ".join(f"{original} -> {backup.name}" for original, backup in archived_pairs)
+            self._log_training(f"Da luu ket qua truoc do: {details}")
 
     def _open_data_settings(self) -> None:
         dialog = DataSettingsDialog(self.dataset_registry, self.cache_root, self)
@@ -634,6 +705,15 @@ class NoduleApp(QMainWindow):
         if path:
             self.train_checkpoint_edit.setText(path)
 
+    def _browse_resume_checkpoint(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Chọn checkpoint để tiếp tục",
+            filter="PyTorch checkpoint (*.pt *.pth)",
+        )
+        if path:
+            self.resume_checkpoint_edit.setText(path)
+
     def _on_threshold_changed(self, value: int) -> None:
         self.threshold_label.setText(f"{value / 100:.2f}")
 
@@ -680,6 +760,8 @@ class NoduleApp(QMainWindow):
         xml_text = self.xml_path_edit.text().strip()
         threshold = self.threshold_slider.value() / 100
         min_voxels = self.min_voxels_spin.value()
+        min_slices = self.min_slices_spin.value()
+        limit_to_lung = self.limit_to_lung_checkbox.isChecked()
 
         try:
             self.status_label.setText("Dang xu ly...")
@@ -696,6 +778,8 @@ class NoduleApp(QMainWindow):
                 xml_path,
                 threshold,
                 min_voxels,
+                min_slices,
+                limit_to_lung,
             )
         except Exception as exc:  # pragma: no cover - UI feedback
             QMessageBox.critical(self, "Loi", str(exc))
@@ -725,6 +809,8 @@ class NoduleApp(QMainWindow):
         xml_path: Optional[Path],
         threshold: float,
         min_voxels: int,
+        min_slices: int,
+        limit_to_lung: bool,
     ) -> Tuple[np.ndarray, Optional[np.ndarray], List[dict]]:
         volume_np, meta = load_dicom_series(dicom_source)
         original_volume = volume_np
@@ -779,11 +865,25 @@ class NoduleApp(QMainWindow):
             binary_mask = (
                 mask_tensor.squeeze(0).squeeze(0).cpu().numpy().astype(np.uint8)
             )
+        if limit_to_lung:
+            lung_mask = estimate_lung_mask(original_volume)
+            if lung_mask is not None:
+                binary_mask = np.where(lung_mask.astype(bool), binary_mask, 0)
+
         try:
-            nodules = postprocess_nodules(binary_mask, min_voxels=min_voxels)
+            nodules, connected_labels = postprocess_nodules(
+                binary_mask,
+                min_voxels=min_voxels,
+                min_slices=min_slices,
+                return_labels=True,
+            )
         except ImportError as exc:
             raise RuntimeError("Can cai scipy de hau xu ly.") from exc
-        display_mask, labeled_mask = extract_filtered_mask(binary_mask, nodules)
+        display_mask, labeled_mask = extract_filtered_mask(
+            binary_mask,
+            nodules,
+            labeled_mask=connected_labels,
+        )
         self._labeled_mask = labeled_mask
         summary = analyze_nodules(nodules, annotations, meta)
         return original_volume, display_mask, summary
@@ -1085,6 +1185,21 @@ class NoduleApp(QMainWindow):
             QMessageBox.warning(self, "Khong the truy cap du lieu", str(exc))
             return
 
+        checkpoint_text = self.train_checkpoint_edit.text().strip()
+        if not checkpoint_text:
+            QMessageBox.warning(self, "Checkpoint thiếu", "Hãy chọn nơi lưu checkpoint.")
+            return
+        checkpoint_path = Path(checkpoint_text)
+
+        resume_text = self.resume_checkpoint_edit.text().strip()
+        resume_path: Optional[Path] = None
+        if resume_text:
+            candidate = Path(resume_text)
+            if not candidate.exists():
+                QMessageBox.warning(self, "Checkpoint không tồn tại", f"Không tìm thấy '{candidate}'.")
+                return
+            resume_path = candidate
+
         try:
             config = TrainingConfig(
                 data_dir=data_dir,
@@ -1095,16 +1210,34 @@ class NoduleApp(QMainWindow):
                 num_workers=self.worker_spin.value(),
                 seed=42,
                 device=self.device_combo.currentText(),
-                checkpoint=Path(self.train_checkpoint_edit.text()),
+                checkpoint=checkpoint_path,
+                resume=resume_path,
             )
         except ValueError as exc:
             QMessageBox.warning(self, "Tham so sai", str(exc))
             return
 
+        self._current_training_checkpoint = checkpoint_path
+
         self.train_button.setEnabled(False)
         self.train_log.clear()
         self._log_training("Bat dau huan luyen...")
         self._log_training(f"Su dung du lieu: {data_dir}")
+        self._log_training(f"Checkpoint dau ra: {checkpoint_path}")
+        if resume_path:
+            self._log_training(f"Tiep tuc tu checkpoint: {resume_path}")
+
+        skip_archives: Optional[List[Path]] = None
+        if resume_path and resume_path.expanduser().resolve() == checkpoint_path.expanduser().resolve():
+            skip_archives = [resume_path]
+
+        try:
+            self._archive_existing_training_artifacts(checkpoint_path, skip_paths=skip_archives)
+        except RuntimeError as exc:
+            self._log_training(f"Luu tru that bai: {exc}")
+            QMessageBox.critical(self, "Khong the ghi de checkpoint", str(exc))
+            self.train_button.setEnabled(True)
+            return
 
         # Start resource monitoring
         self._start_resource_monitoring()
@@ -1129,7 +1262,7 @@ class NoduleApp(QMainWindow):
         self._log_training(message)
 
     def _on_training_finished(self, history: dict) -> None:
-        checkpoint_path = Path(self.train_checkpoint_edit.text())
+        checkpoint_path = self._current_training_checkpoint or Path(self.train_checkpoint_edit.text())
         self._set_checkpoint_path(checkpoint_path)
         self._log_training("\nHoan tat huan luyen!")
         self._log_training(f"Checkpoint luu tai: {checkpoint_path}")
@@ -1172,6 +1305,7 @@ class NoduleApp(QMainWindow):
         if self.training_thread:
             self.training_thread.deleteLater()
             self.training_thread = None
+        self._current_training_checkpoint = None
 
 
 def main() -> None:
