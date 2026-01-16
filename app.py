@@ -812,7 +812,7 @@ class NoduleApp(QMainWindow):
         min_slices: int,
         limit_to_lung: bool,
     ) -> Tuple[np.ndarray, Optional[np.ndarray], List[dict]]:
-        volume_np, meta = load_dicom_series(dicom_source)
+        volume_np, meta, _ = load_dicom_series(dicom_source)
         original_volume = volume_np
         self._labeled_mask = None
         model = self._load_model()

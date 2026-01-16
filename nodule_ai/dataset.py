@@ -53,7 +53,7 @@ class LIDCDataset(Dataset):
     def _load_item(self, idx: int) -> Dict[str, object]:
         sample = self.samples[idx]
         series_dir = sample["series_dir"]
-        volume_np, meta = load_dicom_series(series_dir)
+        volume_np, meta, _ = load_dicom_series(series_dir)
         mask_np = build_nodule_mask(volume_np.shape, sample["annotations"], meta)
         volume = torch.from_numpy(volume_np).unsqueeze(0)  # (1, Z, Y, X)
         mask = torch.from_numpy(mask_np.astype("float32")).unsqueeze(0)

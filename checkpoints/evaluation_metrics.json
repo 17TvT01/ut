@@ -1,0 +1,12 @@
+{
+  "dice_coefficient": 0.0007176342845640306,
+  "iou": 0.00035894593828328494,
+  "sensitivity_recall": 0.9959606160070789,
+  "specificity": 0.46344349119478323,
+  "precision": 0.00035894646083790756,
+  "f1_score": 0.0007176335643703935,
+  "true_positives": 3945,
+  "false_positives": 10986552,
+  "false_negatives": 16,
+  "true_negatives": 9489487
+}

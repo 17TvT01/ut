@@ -19,11 +19,11 @@
   "gpu_count": 1,
   "best_epoch": 1,
   "best_val_loss": 1.0,
-  "final_train_loss": 0.9999580085277557,
+  "final_train_loss": 0.9390748292207718,
   "final_val_loss": 1.0,
   "epochs_completed": 20,
   "device": "cuda",
-  "data_dir": "C:\\NCS\\ut\\data",
+  "data_dir": "C:\\NCS\\NCUTP\\data",
   "checkpoint": "checkpoints\\complex_unet3d.pt",
   "artifacts": {
     "history_json": "checkpoints\\complex_unet3d.history.json",

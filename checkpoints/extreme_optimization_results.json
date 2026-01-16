@@ -1,0 +1,65 @@
+[
+  {
+    "name": "Low Threshold (0.3) + Ultra Aggressive Filter",
+    "dice": 0.00040027235301408955,
+    "precision": 0.0002001762390136717,
+    "sensitivity": 0.9999999999952359,
+    "tp": 2099,
+    "fp": 10483661,
+    "fn": 0
+  },
+  {
+    "name": "Low Threshold (0.4) + Ultra Aggressive Filter",
+    "dice": 0.0006254535767601227,
+    "precision": 0.00031282461701712214,
+    "sensitivity": 0.9999999999952359,
+    "tp": 2099,
+    "fp": 6707731,
+    "fn": 0
+  },
+  {
+    "name": "Medium (0.5) + Ultra Aggressive Filter",
+    "dice": 0.00545291662243704,
+    "precision": 0.0027350442738104472,
+    "sensitivity": 0.8685088137166818,
+    "tp": 1823,
+    "fp": 664711,
+    "fn": 276
+  },
+  {
+    "name": "Medium (0.6) + Large Component Only",
+    "dice": 0.0077397113423281596,
+    "precision": 0.003887175944287282,
+    "sensitivity": 0.8685088137166818,
+    "tp": 1823,
+    "fp": 467155,
+    "fn": 276
+  },
+  {
+    "name": "Very High (0.90) + Minimal Filter",
+    "dice": 0.020654441511795584,
+    "precision": 0.010453673077707748,
+    "sensitivity": 0.8537398761274239,
+    "tp": 1792,
+    "fp": 169631,
+    "fn": 307
+  },
+  {
+    "name": "Very High (0.95) + Minimal Filter",
+    "dice": 0.027079616008862877,
+    "precision": 0.013773222293400535,
+    "sensitivity": 0.798951881844693,
+    "tp": 1677,
+    "fp": 120081,
+    "fn": 422
+  },
+  {
+    "name": "Adaptive: High on nodule volumes only",
+    "dice": 0.024276402085465165,
+    "precision": 0.0123102479606712,
+    "sensitivity": 0.8685088137166818,
+    "tp": 1823,
+    "fp": 146265,
+    "fn": 276
+  }
+]

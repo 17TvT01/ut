@@ -1,0 +1,13 @@
+Metric,Value
+Total Epochs,20
+Best Epoch,1
+Best Val Loss,1.000000
+Best Val Dice Score,0.000000
+Final Train Loss,0.999958
+Final Train Dice Score,0.000042
+Final Val Loss,1.000000
+Final Val Dice Score,0.000000
+Loss Improvement (%),-0.05%
+Multi-GPU,False
+GPU Count,1
+AMP Enabled,True
