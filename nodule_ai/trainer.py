@@ -11,7 +11,7 @@ import torch
 from torch.utils.data import DataLoader, random_split
 from torch import amp
 
-from .dataset import LIDCDataset
+from .dataset import build_dataset
 from .model import ComplexUNet3D
 from .training import evaluate_epoch, train_epoch
 
@@ -86,7 +86,7 @@ def build_dataloaders(
     target_shape: Tuple[int, int, int] | None,
     pin_memory: bool = False,
 ) -> Tuple[DataLoader, DataLoader]:
-    dataset = LIDCDataset(data_dir, cache=False, target_shape=target_shape)
+    dataset = build_dataset(data_dir, cache=False, target_shape=target_shape)
     if len(dataset) < 2:
         raise ValueError("Need at least 2 studies to create validation split")
     val_size = max(1, int(len(dataset) * val_split))

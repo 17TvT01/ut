@@ -1,0 +1,95 @@
+================================================================================
+  LUNG NODULE DETECTION - QUICK START GUIDE
+================================================================================
+
+FASTEST WAY TO START (Windows):
+  1. Double-click: run_app.bat
+  Done! The application will start.
+
+FASTEST WAY TO START (macOS/Linux):
+  1. Open terminal in this folder
+  2. Run: bash run_app.sh
+  Done!
+
+================================================================================
+FIRST TIME SETUP (If run_app.bat fails):
+================================================================================
+
+Step 1: Install Python 3.9+
+  - Download from: https://www.python.org/downloads/
+  - During install, CHECK: "Add Python to PATH"
+  - Verify: Open Command Prompt, type: python --version
+
+Step 2: Install Dependencies
+  - Open Command Prompt in this folder
+  - Type: pip install -r requirements.txt
+  - Wait for completion (2-5 minutes)
+
+Step 3: Run the Application
+  - Option A: Double-click run_app.bat
+  - Option B: Type in Command Prompt: python app.py
+
+================================================================================
+SYSTEM REQUIREMENTS:
+================================================================================
+
+Minimum:
+  - Windows 10, macOS 10.14, or Ubuntu 20.04+
+  - Python 3.9 or later
+  - 8 GB RAM
+  - 2 GB free storage
+  
+Recommended:
+  - Windows 11 or Ubuntu 22.04+
+  - Python 3.10 or 3.11
+  - 16 GB RAM
+  - 4 GB free storage
+  - NVIDIA GPU with CUDA support
+
+================================================================================
+TROUBLESHOOTING:
+================================================================================
+
+Problem: "Python not found" error
+Solution: 
+  - Install Python from python.org (check "Add to PATH")
+  - Or use Command Prompt: python3 --version
+
+Problem: "ModuleNotFoundError" or missing packages
+Solution:
+  - Open Command Prompt in this folder
+  - Type: pip install -r requirements.txt --upgrade
+  - Wait for completion
+
+Problem: Application runs slowly
+Solution:
+  - Close other applications to free RAM
+  - Install NVIDIA GPU drivers for acceleration
+  - Ensure you have 8+ GB available RAM
+
+Problem: Cannot find run_app.bat
+Solution:
+  - Use Command Prompt to navigate to folder
+  - Type: run_app.bat
+  - Or use Python: python app.py
+
+================================================================================
+FOR DEVELOPERS:
+================================================================================
+
+To install in development mode:
+  pip install -e .
+
+To run as Python module:
+  python -m nodule_ai
+
+For more information:
+  - See README.md for detailed documentation
+  - Check app.py for application source code
+  - Review nodule_ai/ package for core functionality
+
+================================================================================
+
+Questions? See README.md for complete documentation.
+
+================================================================================

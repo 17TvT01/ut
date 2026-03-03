@@ -1,0 +1,30 @@
+from setuptools import setup, find_packages
+
+setup(
+    name="lung-nodule-detection",
+    version="1.0.0",
+    packages=find_packages(),
+    include_package_data=True,
+    python_requires=">=3.9",
+    install_requires=[
+        "numpy>=1.23",
+        "scipy>=1.10",
+        "torch>=2.0",
+        "torchvision>=0.15",
+        "torchaudio>=2.0",
+        "pydicom>=2.3",
+        "PyQt6>=6.4",
+        "requests>=2.31",
+        "psutil>=5.9",
+        "Pillow>=8.0.0",
+    ],
+    entry_points={
+        "console_scripts": [
+            "lung-nodule-detection=app:main",
+        ],
+    },
+    author="Lung Nodule AI Team",
+    description="Desktop application for lung nodule detection and analysis",
+    long_description=open("README.md").read(),
+    long_description_content_type="text/markdown",
+)

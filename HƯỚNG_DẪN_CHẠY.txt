@@ -1,0 +1,113 @@
+================================================================================
+  ỨNG DỤNG PHÁT HIỆN U PHỔI - HƯỚNG DẪN NHANH
+================================================================================
+
+CÁCH NHANH NHẤT ĐỂ BẮT ĐẦU (Windows):
+  1. Bấm đôi vào file: run_app.bat
+  Xong! Ứng dụng sẽ khởi động.
+
+CÁCH NHANH NHẤT ĐỂ BẮT ĐẦU (Mac/Linux):
+  1. Mở terminal trong thư mục này
+  2. Chạy: bash run_app.sh
+  Xong!
+
+================================================================================
+HƯỚNG DẪN LẦN ĐẦU (Nếu run_app.bat không hoạt động):
+================================================================================
+
+Bước 1: Cài đặt Python 3.9 trở lên
+  - Tải từ: https://www.python.org/downloads/
+  - Khi cài, CHỌN: "Add Python to PATH"
+  - Kiểm tra: Mở Command Prompt, gõ: python --version
+
+Bước 2: Cài đặt các thư viện cần thiết
+  - Mở Command Prompt trong thư mục này
+  - Gõ: pip install -r requirements.txt
+  - Đợi hoàn tất (2-5 phút)
+
+Bước 2.1 (Nếu dùng LUNA16):
+  - Đảm bảo có file `annotations.csv` (thường nằm trong `CSVFILES/annotations.csv`)
+  - Dữ liệu ảnh dạng `*.mhd` + `*.raw`
+  - Có thể để theo cấu trúc:
+      LUNA16/
+        ├─ subset0 ... subset9 (chứa *.mhd, *.raw)
+        └─ CSVFILES/annotations.csv
+
+Bước 3: Chạy ứng dụng
+  - Cách A: Bấm đôi vào run_app.bat
+  - Cách B: Gõ trong Command Prompt: python app.py
+
+================================================================================
+YÊU CẦU HỆ THỐNG:
+================================================================================
+
+Tối thiểu:
+  - Windows 10, Mac OS 10.14, hoặc Ubuntu 20.04+
+  - Python 3.9 trở lên
+  - RAM 8 GB
+  - Dung lượng trống 2 GB
+  
+Được khuyên:
+  - Windows 11 hoặc Ubuntu 22.04+
+  - Python 3.10 hoặc 3.11
+  - RAM 16 GB
+  - Dung lượng trống 4 GB
+  - GPU NVIDIA hỗ trợ CUDA
+
+================================================================================
+KHẮC PHỤC SỰ CỐ:
+================================================================================
+
+Vấn đề: Lỗi "Python not found"
+Giải pháp:
+  - Cài đặt Python từ python.org (chọn "Add to PATH")
+  - Hoặc dùng Command Prompt: python3 --version
+
+Vấn đề: Lỗi "ModuleNotFoundError" hoặc thiếu thư viện
+Giải pháp:
+  - Mở Command Prompt trong thư mục này
+  - Gõ: pip install -r requirements.txt --upgrade
+  - Đợi hoàn tất
+
+Vấn đề: Dùng LUNA16 nhưng báo lỗi đọc `.mhd`
+Giải pháp:
+  - Cài lại dependencies: `pip install -r requirements.txt`
+  - Kiểm tra có `SimpleITK` trong môi trường hiện tại
+
+Sử dụng LUNA16 trong ứng dụng:
+  - Tab Huấn luyện: chọn thư mục gốc LUNA16 (chứa `subset*`)
+  - App sẽ tự nhận diện LUNA16 và tạo mask từ `annotations.csv`
+  - Tab Phân tích: có thể chọn trực tiếp file `.mhd` để chạy inference
+
+Vấn đề: Ứng dụng chạy chậm
+Giải pháp:
+  - Đóng các ứng dụng khác để giải phóng RAM
+  - Cài đặt driver GPU NVIDIA để tăng tốc
+  - Đảm bảo RAM trống 8+ GB
+
+Vấn đề: Không tìm thấy run_app.bat
+Giải pháp:
+  - Dùng Command Prompt đi đến thư mục này
+  - Gõ: run_app.bat
+  - Hoặc chạy Python: python app.py
+
+================================================================================
+CHO CÁC LẬP TRÌNH VIÊN:
+================================================================================
+
+Để cài đặt ở chế độ phát triển:
+  pip install -e .
+
+Để chạy dưới dạng Python module:
+  python -m nodule_ai
+
+Thông tin thêm:
+  - Xem README.md để biết tài liệu chi tiết
+  - Kiểm tra app.py để xem mã nguồn chính
+  - Xem thư mục nodule_ai/ để biết các chức năng cơ bản
+
+================================================================================
+
+Có câu hỏi? Xem README.md để biết tài liệu hoàn chỉnh.
+
+================================================================================

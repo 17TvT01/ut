@@ -9,6 +9,11 @@ import scipy.ndimage
 
 from .annotations import NoduleAnnotation
 
+try:
+    import SimpleITK as sitk
+except ImportError:  # pragma: no cover - optional dependency at import time
+    sitk = None  # type: ignore
+
 
 def normalize_hounsfield(volume: np.ndarray, clip: Tuple[int, int] = (-1000, 400)) -> np.ndarray:
     min_hu, max_hu = clip
@@ -162,6 +167,42 @@ def load_dicom_series(
     return volume, meta_info, final_spacing
 
 
+def load_volume_source(
+    source_path: Path,
+    target_spacing: Optional[Tuple[float, float, float]] = (1.0, 1.0, 1.0),
+) -> Tuple[np.ndarray, Dict[str, Dict[str, float]], Tuple[float, float, float]]:
+    """Load a volume from DICOM folder or LUNA16 MHD file.
+
+    Returns normalized volume (Z,Y,X), metadata map, and spacing tuple.
+    """
+    source_path = Path(source_path)
+
+    if source_path.is_file() and source_path.suffix.lower() == ".mhd":
+        if sitk is None:
+            raise ImportError("SimpleITK is required to read .mhd files.")
+
+        image = sitk.ReadImage(str(source_path))
+        volume = sitk.GetArrayFromImage(image).astype(np.float32)  # Z,Y,X
+        spacing_xyz = image.GetSpacing()  # X,Y,Z
+        spacing_zyx = (float(spacing_xyz[2]), float(spacing_xyz[1]), float(spacing_xyz[0]))
+
+        if target_spacing is not None:
+            volume = resample_volume(volume, spacing_zyx, target_spacing)
+            final_spacing = target_spacing
+        else:
+            final_spacing = spacing_zyx
+
+        volume = normalize_hounsfield(volume)
+        return volume, {}, final_spacing
+
+    if source_path.is_dir():
+        return load_dicom_series(source_path, target_spacing=target_spacing)
+
+    raise ValueError(
+        f"Unsupported source: {source_path}. Expected DICOM directory or LUNA16 .mhd file."
+    )
+
+
 def build_nodule_mask(
     volume_shape: Tuple[int, int, int], # This MUST be the shape of ORIGINAL volume
     annotations: Sequence[NoduleAnnotation],
@@ -236,6 +277,7 @@ def match_and_resample(
 __all__ = [
     "normalize_hounsfield",
     "load_dicom_series",
+    "load_volume_source",
     "build_nodule_mask",
     "resample_volume",
     "match_and_resample"

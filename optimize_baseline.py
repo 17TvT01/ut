@@ -9,9 +9,10 @@ Thay vì train model mới (chậm), optimize model cũ với:
 
 from __future__ import annotations
 
+import csv
 import sys
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -22,6 +23,43 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from nodule_ai.dataset import LIDCDataset
 from nodule_ai.model import ComplexUNet3D
+
+
+def resolve_checkpoint_from_csv(manifest_path: Path) -> Optional[Path]:
+    """Resolve checkpoint path from CSV manifest.
+
+    Supported columns (priority): checkpoint_path, checkpoint, path.
+    Optional enable column: active (true/false, 1/0, yes/no).
+    """
+    if not manifest_path.exists():
+        return None
+
+    with manifest_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+        reader = csv.DictReader(csv_file)
+        if not reader.fieldnames:
+            raise ValueError(f"CSV manifest has no header: {manifest_path}")
+
+        for row in reader:
+            raw_active = (row.get("active") or "true").strip().lower()
+            if raw_active in {"0", "false", "no", "off"}:
+                continue
+
+            raw_path = (
+                (row.get("checkpoint_path") or "").strip()
+                or (row.get("checkpoint") or "").strip()
+                or (row.get("path") or "").strip()
+            )
+            if not raw_path:
+                continue
+
+            checkpoint_path = Path(raw_path).expanduser()
+            if not checkpoint_path.is_absolute():
+                checkpoint_path = (manifest_path.parent / checkpoint_path).resolve()
+
+            if checkpoint_path.exists():
+                return checkpoint_path
+
+    return None
 
 
 def advanced_postprocessing(
@@ -276,17 +314,15 @@ def optimize_baseline_model(
 
 
 if __name__ == "__main__":
-    # Use baseline model
-    checkpoint = Path("checkpoints/complex_unet3d_20251115-005610.pt")
-    
-    if not checkpoint.exists():
-        # Try other checkpoints
-        checkpoint = Path("checkpoints/complex_unet3d.pt")
-    
-    if checkpoint.exists():
-        results, best = optimize_baseline_model(checkpoint)
-    else:
-        print(f"✗ Checkpoint not found: {checkpoint}")
-        print("Available checkpoints:")
-        for ckpt in Path("checkpoints").glob("*.pt"):
-            print(f"  - {ckpt.name}")
+    manifest_path = Path("checkpoints/checkpoint_manifest.csv")
+    checkpoint = resolve_checkpoint_from_csv(manifest_path)
+
+    if checkpoint is None:
+        print(f"✗ No valid checkpoint found in CSV: {manifest_path}")
+        print("Expected CSV format (header required):")
+        print("  checkpoint_path,active")
+        print("  complex_unet3d.pt,true")
+        print("  complex_unet3d_focal.pt,false")
+        sys.exit(1)
+
+    results, best = optimize_baseline_model(checkpoint)

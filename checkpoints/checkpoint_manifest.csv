@@ -1,0 +1,3 @@
+checkpoint_path,active
+complex_unet3d.pt,true
+complex_unet3d_focal.pt,false

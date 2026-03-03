@@ -40,7 +40,7 @@ from PyQt6.QtWidgets import (
 )
 
 from nodule_ai.annotations import NoduleAnnotation, parse_annotation_xml
-from nodule_ai.dicom import load_dicom_series
+from nodule_ai.dicom import load_volume_source
 from nodule_ai.dataset import LIDCDataset
 from nodule_ai.inference import (
     analyze_nodules,
@@ -142,7 +142,7 @@ class DataSourcePrompt(QDialog):
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Chon file du lieu",
-            filter="ZIP Files (*.zip);;Tat ca (*.*)",
+            filter="Data Files (*.zip *.mhd);;ZIP Files (*.zip);;MetaImage (*.mhd);;Tat ca (*.*)",
         )
         if path:
             self.path_edit.setText(path)
@@ -326,7 +326,7 @@ class NoduleApp(QMainWindow):
         dicom_box.addWidget(dicom_button)
         dicom_container = QWidget()
         dicom_container.setLayout(dicom_box)
-        source_form.addRow("Thu muc DICOM / ZIP", dicom_container)
+        source_form.addRow("Thu muc DICOM / ZIP / MHD", dicom_container)
 
         self.xml_path_edit = QLineEdit()
         xml_button = QPushButton("Chọn...")
@@ -679,10 +679,18 @@ class NoduleApp(QMainWindow):
 
     # --------- helpers ---------
     def _browse_dicom_dir(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Chon thu muc DICOM")
-        if path:
-            self.dicom_path_edit.setText(path)
-            self._remember_dataset(Path(path))
+        directory = QFileDialog.getExistingDirectory(self, "Chon thu muc DICOM")
+        if directory:
+            self.dicom_path_edit.setText(directory)
+            self._remember_dataset(Path(directory))
+            return
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Hoac chon file MHD (LUNA16)",
+            filter="MetaImage (*.mhd);;Tat ca (*.*)",
+        )
+        if file_path:
+            self.dicom_path_edit.setText(file_path)
 
     def _browse_xml_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Chọn tệp XML", filter="XML Files (*.xml)")
@@ -812,7 +820,7 @@ class NoduleApp(QMainWindow):
         min_slices: int,
         limit_to_lung: bool,
     ) -> Tuple[np.ndarray, Optional[np.ndarray], List[dict]]:
-        volume_np, meta, _ = load_dicom_series(dicom_source)
+        volume_np, meta, _ = load_volume_source(dicom_source)
         original_volume = volume_np
         self._labeled_mask = None
         model = self._load_model()
